@@ -153,19 +153,20 @@ app.get('/api/reddit-videos', async (req, res) => {
         const mediaPosts = extractMediaPosts(allPosts);
         console.log(`🎬 Filtered down to ${mediaPosts.length} media posts.`);
 
-        // Cache it
-        fs.writeFileSync(CACHE_PATH, JSON.stringify(mediaPosts, null, 2), 'utf-8');
-        console.log('✅ Cached new data.');
 
-        const selected = getRandomItems(mediaPosts, mediaPosts.length);
-
-        const responseData = {
-            data: { children: selected },
-            total: mediaPosts.length,
-            after: newAfter,
-            cachedAt: new Date().toISOString(),
+        const all =
+        {
+            data: {
+                children: mediaPosts,
+                total: mediaPosts.length,
+                after: newAfter,
+                cachedAt: new Date().toISOString(),
+            }
         };
-
+        // Cache it
+        fs.writeFileSync(CACHE_PATH, JSON.stringify(all, null, 2), 'utf-8');
+        console.log('✅ Cached new data.');
+        const responseData = getRandomItems(all, mediaPosts.length);
         res.json(responseData);
     } catch (error) {
         console.error('🔥 Reddit API error:', error.response?.data || error.message);
