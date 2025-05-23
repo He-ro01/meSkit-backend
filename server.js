@@ -151,6 +151,9 @@ app.get('/api/reddit-videos', async (req, res) => {
         });
 
         console.log(`🎬 Filtered down to ${mediaPosts.length} media posts.`);
+        // Save to cache
+        fs.writeFileSync(CACHE_PATH, JSON.stringify(mediaPosts, null, 2), 'utf-8');
+        console.log('✅ Cached new data.');
 
         const selected = getRandomItems(mediaPosts, mediaPosts.length);
 
@@ -161,9 +164,7 @@ app.get('/api/reddit-videos', async (req, res) => {
             cachedAt: new Date().toISOString(),
         };
 
-        // Save to cache
-        fs.writeFileSync(CACHE_PATH, JSON.stringify(responseData, null, 2), 'utf-8');
-        console.log('✅ Cached new data.');
+
 
         res.json(responseData);
 
