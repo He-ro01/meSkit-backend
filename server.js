@@ -14,7 +14,7 @@ const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 
 app.use(cors());
 
-// Validate .env variables early
+// Required environment variables check
 const requiredEnv = [
     'REDDIT_CLIENT_ID',
     'REDDIT_CLIENT_SECRET',
@@ -30,7 +30,7 @@ for (const key of requiredEnv) {
     }
 }
 
-// Token cache
+// Token handling
 let accessToken = null;
 let tokenExpiry = 0;
 
@@ -38,7 +38,6 @@ function isTokenExpired() {
     return !accessToken || Date.now() >= tokenExpiry;
 }
 
-// Get Reddit access token
 async function getRedditAccessToken() {
     console.log('🔑 Fetching new Reddit access token...');
     const auth = Buffer.from(`${process.env.REDDIT_CLIENT_ID}:${process.env.REDDIT_CLIENT_SECRET}`).toString('base64');
@@ -73,7 +72,7 @@ async function getRedditAccessToken() {
     }
 }
 
-// Fetch all Reddit posts
+// Fetch Reddit posts from a subreddit
 async function fetchAllPosts(subreddit, accessToken, maxPages = 20) {
     let allPosts = [];
     let after = null;
@@ -81,6 +80,7 @@ async function fetchAllPosts(subreddit, accessToken, maxPages = 20) {
 
     while (page < maxPages) {
         const url = `https://oauth.reddit.com/r/${subreddit}/new.json?limit=100${after ? `&after=${after}` : ''}`;
+
         const res = await axios.get(url, {
             headers: {
                 Authorization: `Bearer ${accessToken}`,
@@ -99,13 +99,30 @@ async function fetchAllPosts(subreddit, accessToken, maxPages = 20) {
     return { posts: allPosts, after };
 }
 
-// Shuffle and get N items
+// Filter for video/gif posts
+function extractMediaPosts(posts) {
+    return posts.filter(post => {
+        const { is_video, url } = post.data;
+        const isGif = url.endsWith('.gif');
+        const isMp4 = url.endsWith('.mp4');
+
+        if (is_video) return true;
+        if (isGif) {
+            post.data.url = url.replace('.gif', '.mp4');
+            return true;
+        }
+        if (isMp4) return true;
+        return false;
+    });
+}
+
+// Shuffle and select posts
 function getRandomItems(arr, count) {
     const shuffled = [...arr].sort(() => 0.5 - Math.random());
     return shuffled.slice(0, count);
 }
 
-// Check if cache file is fresh
+// Check if cache is fresh
 function isCacheFresh(filePath, ttl) {
     try {
         const stats = fs.statSync(filePath);
@@ -116,17 +133,15 @@ function isCacheFresh(filePath, ttl) {
     }
 }
 
-// API endpoint
+// Reddit API endpoint
 app.get('/api/reddit-videos', async (req, res) => {
     try {
-        // Serve cached version if fresh
         if (isCacheFresh(CACHE_PATH, CACHE_TTL)) {
             console.log('📦 Using cached Reddit data');
             const cached = fs.readFileSync(CACHE_PATH, 'utf-8');
             return res.json(JSON.parse(cached));
         }
 
-        // Get new token if needed
         if (isTokenExpired()) {
             await getRedditAccessToken();
         }
@@ -135,23 +150,10 @@ app.get('/api/reddit-videos', async (req, res) => {
         const { posts: allPosts, after: newAfter } = await fetchAllPosts('EbonyHotties', accessToken, 10);
         console.log(`📄 Retrieved ${allPosts.length} posts.`);
 
-        // Filter and convert
-        const mediaPosts = allPosts.filter(post => {
-            const { is_video, url } = post.data;
-            const isGif = url.endsWith('.gif');
-            const isMp4 = url.endsWith('.mp4');
-
-            if (is_video) return true;
-            if (isGif) {
-                post.data.url = url.replace('.gif', '.mp4');
-                return true;
-            }
-            if (isMp4) return true;
-            return false;
-        });
-
+        const mediaPosts = extractMediaPosts(allPosts);
         console.log(`🎬 Filtered down to ${mediaPosts.length} media posts.`);
-        // Save to cache
+
+        // Cache it
         fs.writeFileSync(CACHE_PATH, JSON.stringify(mediaPosts, null, 2), 'utf-8');
         console.log('✅ Cached new data.');
 
@@ -164,10 +166,7 @@ app.get('/api/reddit-videos', async (req, res) => {
             cachedAt: new Date().toISOString(),
         };
 
-
-
         res.json(responseData);
-
     } catch (error) {
         console.error('🔥 Reddit API error:', error.response?.data || error.message);
         res.status(500).json({ error: 'Failed to fetch Reddit videos' });
