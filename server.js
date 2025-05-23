@@ -14,7 +14,7 @@ const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 
 app.use(cors());
 
-// Required environment variables check
+// Check required .env variables
 const requiredEnv = [
     'REDDIT_CLIENT_ID',
     'REDDIT_CLIENT_SECRET',
@@ -136,12 +136,25 @@ function isCacheFresh(filePath, ttl) {
 // Reddit API endpoint
 app.get('/api/reddit-videos', async (req, res) => {
     try {
+        // Cache hit
         if (isCacheFresh(CACHE_PATH, CACHE_TTL)) {
             console.log('📦 Using cached Reddit data');
-            const cached = fs.readFileSync(CACHE_PATH, 'utf-8');
-            return res.json(JSON.parse(cached));
+            const cached = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf-8'));
+            const selectedPosts = getRandomItems(cached.data.children, cached.data.children.length);
+
+            const responseData = {
+                data: {
+                    children: selectedPosts,
+                    total: selectedPosts.length,
+                    after: cached.data.after,
+                    cachedAt: cached.data.cachedAt,
+                }
+            };
+
+            return res.json(responseData);
         }
 
+        // Cache miss
         if (isTokenExpired()) {
             await getRedditAccessToken();
         }
@@ -153,9 +166,8 @@ app.get('/api/reddit-videos', async (req, res) => {
         const mediaPosts = extractMediaPosts(allPosts);
         console.log(`🎬 Filtered down to ${mediaPosts.length} media posts.`);
 
-
-        const all =
-        {
+        // Cache full list
+        const cachedData = {
             data: {
                 children: mediaPosts,
                 total: mediaPosts.length,
@@ -163,10 +175,20 @@ app.get('/api/reddit-videos', async (req, res) => {
                 cachedAt: new Date().toISOString(),
             }
         };
-        // Cache it
-        fs.writeFileSync(CACHE_PATH, JSON.stringify(all, null, 2), 'utf-8');
+
+        fs.writeFileSync(CACHE_PATH, JSON.stringify(cachedData, null, 2), 'utf-8');
         console.log('✅ Cached new data.');
-        const responseData = getRandomItems(all, mediaPosts.length);
+
+        const selectedPosts = getRandomItems(mediaPosts, mediaPosts.length);
+        const responseData = {
+            data: {
+                children: selectedPosts,
+                total: selectedPosts.length,
+                after: newAfter,
+                cachedAt: cachedData.data.cachedAt,
+            }
+        };
+
         res.json(responseData);
     } catch (error) {
         console.error('🔥 Reddit API error:', error.response?.data || error.message);
