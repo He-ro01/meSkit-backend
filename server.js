@@ -1,10 +1,16 @@
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
 const PORT = 3000;
+
+// Cache settings
+const CACHE_PATH = path.join(__dirname, 'reddit_cache.json');
+const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 
 app.use(cors());
 
@@ -28,15 +34,13 @@ for (const key of requiredEnv) {
 let accessToken = null;
 let tokenExpiry = 0;
 
-// Utility: Is token expired?
 function isTokenExpired() {
     return !accessToken || Date.now() >= tokenExpiry;
 }
 
-// Step 1: Get new access token
+// Get Reddit access token
 async function getRedditAccessToken() {
     console.log('🔑 Fetching new Reddit access token...');
-
     const auth = Buffer.from(`${process.env.REDDIT_CLIENT_ID}:${process.env.REDDIT_CLIENT_SECRET}`).toString('base64');
 
     try {
@@ -69,8 +73,8 @@ async function getRedditAccessToken() {
     }
 }
 
-// Step 2: API Endpoint
-async function fetchAllPosts(subreddit, accessToken, maxPages = 10) {
+// Fetch all Reddit posts
+async function fetchAllPosts(subreddit, accessToken, maxPages = 20) {
     let allPosts = [];
     let after = null;
     let page = 0;
@@ -95,52 +99,73 @@ async function fetchAllPosts(subreddit, accessToken, maxPages = 10) {
     return { posts: allPosts, after };
 }
 
+// Shuffle and get N items
 function getRandomItems(arr, count) {
     const shuffled = [...arr].sort(() => 0.5 - Math.random());
     return shuffled.slice(0, count);
 }
 
+// Check if cache file is fresh
+function isCacheFresh(filePath, ttl) {
+    try {
+        const stats = fs.statSync(filePath);
+        const age = Date.now() - stats.mtimeMs;
+        return age < ttl;
+    } catch (err) {
+        return false;
+    }
+}
+
+// API endpoint
 app.get('/api/reddit-videos', async (req, res) => {
     try {
+        // Serve cached version if fresh
+        if (isCacheFresh(CACHE_PATH, CACHE_TTL)) {
+            console.log('📦 Using cached Reddit data');
+            const cached = fs.readFileSync(CACHE_PATH, 'utf-8');
+            return res.json(JSON.parse(cached));
+        }
+
+        // Get new token if needed
         if (isTokenExpired()) {
             await getRedditAccessToken();
         }
 
-        console.log('📡 Fetching all Reddit posts...');
+        console.log('📡 Fetching Reddit posts...');
         const { posts: allPosts, after: newAfter } = await fetchAllPosts('EbonyHotties', accessToken, 10);
         console.log(`📄 Retrieved ${allPosts.length} posts.`);
 
-        //convert gifs to mp4, delete the ones that cant be converted
+        // Filter and convert
         const mediaPosts = allPosts.filter(post => {
-            const isVideo = post.data.is_video;
-            const isGif = post.data.url.endsWith('.gif');
-            const isMp4 = post.data.url.endsWith('.mp4');
+            const { is_video, url } = post.data;
+            const isGif = url.endsWith('.gif');
+            const isMp4 = url.endsWith('.mp4');
 
-            if (isVideo) {
-                return true;
-            } else if (isGif) {
-                // Convert GIF to MP4
-                const mp4Url = post.data.url.replace('.gif', '.mp4');
-                post.data.url = mp4Url;
-                return true;
-            } else if (isMp4) {
+            if (is_video) return true;
+            if (isGif) {
+                post.data.url = url.replace('.gif', '.mp4');
                 return true;
             }
+            if (isMp4) return true;
             return false;
         });
-        //delete everything that is not mp4
-        i = 0;
-        const videos = [];
 
-        console.log(`🎬 Found ${mediaPosts.length} valid media posts.`);
+        console.log(`🎬 Filtered down to ${mediaPosts.length} media posts.`);
 
-        const selected = getRandomItems(mediaPosts, mediaPosts.Length);
-        // 👉 Return 5 random posts + total + new after token
-        res.json({
+        const selected = getRandomItems(mediaPosts, mediaPosts.length);
+
+        const responseData = {
             data: { children: selected },
             total: mediaPosts.length,
-            after: newAfter, // Include the new after token so the frontend can request next page
-        });
+            after: newAfter,
+            cachedAt: new Date().toISOString(),
+        };
+
+        // Save to cache
+        fs.writeFileSync(CACHE_PATH, JSON.stringify(responseData, null, 2), 'utf-8');
+        console.log('✅ Cached new data.');
+
+        res.json(responseData);
 
     } catch (error) {
         console.error('🔥 Reddit API error:', error.response?.data || error.message);
