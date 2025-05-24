@@ -159,7 +159,7 @@ app.get('/api/reddit-videos', async (req, res) => {
             await getRedditAccessToken();
         }
 
-        console.log('📡 Fetching Reddit posts...');
+        console.log('📡 Fetching Reddit posts...fromFunny');
         const { posts: allPosts, after: newAfter } = await fetchAllPosts('Funny', accessToken, 10);
         console.log(`📄 Retrieved ${allPosts.length} posts.`);
 
