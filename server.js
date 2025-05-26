@@ -23,7 +23,7 @@ app.get('/fetch-videos', async (req, res) => {
     // Replace "m4s" with "mp4" in each document's URL field
     const updatedDocs = randomDocs.map(doc => {
       // If the URL field is directly at doc.url
-      if (doc.url && typeof doc.url === 'string') {
+      if (doc.videoUrl && typeof doc.url === 'string') {
         doc.url = doc.url.replace(/m4s/g, 'mp4');
       }
       
