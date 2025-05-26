@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Post Users to Feed</title>
+</head>
+<body>
+  <h2>Post Users to Feed</h2>
+  <form id="userForm">
+    <label for="users">Enter usernames (comma separated):</label><br />
+    <textarea id="users" name="users" rows="6" cols="60" placeholder="petitelady18, ressaxxx, KatMegaboobs, ..."></textarea><br /><br />
+    <button type="submit">Send</button>
+  </form>
+
+  <div id="response" style="margin-top:20px; white-space: pre-wrap;"></div>
+
+  <script>
+    document.getElementById('userForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const users = document.getElementById('users').value.trim();
+
+      if (!users) {
+        alert('Please enter at least one username.');
+        return;
+      }
+
+      try {
+        const response = await fetch('http://localhost:3000/feed-users', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ users })
+        });
+
+        const resultText = await response.text();
+        document.getElementById('response').textContent = 
+          `Status: ${response.status}\nResponse:\n${resultText}`;
+
+      } catch (err) {
+        document.getElementById('response').textContent = `Error: ${err.message}`;
+      }
+    });
+  </script>
+</body>
+</html>
