@@ -15,20 +15,30 @@ const redGifSchema = new mongoose.Schema({}, { strict: false }); // flexible sch
 const RedGif = mongoose.model('ProcessedRedGifs', redGifSchema, 'processedredgifs');
 
 app.get('/fetch-videos', async (req, res) => {
-  console.log(RedGif);
   const count = parseInt(req.query.var) || 10;
 
   try {
-    const randomDocs = await RedGif.aggregate([
-      { $sample: { size: count } }
-    ]);
+    const randomDocs = await RedGif.aggregate([{ $sample: { size: count } }]);
 
-    res.json(randomDocs);
+    // Replace "m4s" with "mp4" in each document's URL field
+    const updatedDocs = randomDocs.map(doc => {
+      // If the URL field is directly at doc.url
+      if (doc.url && typeof doc.url === 'string') {
+        doc.url = doc.url.replace(/m4s/g, 'mp4');
+      }
+      
+      // If the URL is nested or in other fields, you can adjust this part accordingly
+
+      return doc;
+    });
+
+    res.json(updatedDocs);
   } catch (err) {
     console.error('Error fetching videos:', err);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
+
 
 connectDB().then(() => {
   app.listen(PORT, () => {
