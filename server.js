@@ -1,9 +1,9 @@
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const connectDB = require('./db');
 const cors = require('cors');
-require('dotenv').config();
-const fetch = require('node-fetch'); // Ensure you have node-fetch installed
+const fetch = require('node-fetch'); // Make sure node-fetch is installed
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -20,28 +20,24 @@ const ALLOWED_HOSTS = [
   'https://media.redgifs.com',
 ];
 
-// Utility to return random videos with proxy URL
+// Utility: Get random documents
 async function getRandomVideos(count) {
   const randomDocs = await RedGif.aggregate([{ $sample: { size: count } }]);
   return randomDocs.map(doc => {
     const plainDoc = doc.toObject ? doc.toObject() : doc;
 
     if (!plainDoc.videoUrl) {
-      console.warn('Missing videoUrl for doc:', doc._id);
-      return null; // Skip this doc
+      console.warn('⚠️ Missing videoUrl for doc:', doc._id);
+      return null;
     }
 
-    // If videoUrl ends with .m4s, try to convert it to .mp4
     if (plainDoc.videoUrl.endsWith('.m4s')) {
       plainDoc.videoUrl = plainDoc.videoUrl.replace(/\.m4s$/, '.mp4');
     }
 
-    return {
-      ...plainDoc
-    };
-  }).filter(Boolean); // remove nulls
+    return { ...plainDoc };
+  }).filter(Boolean);
 }
-
 
 // Fetch multiple videos
 app.get('/fetch-videos', async (req, res) => {
@@ -50,38 +46,35 @@ app.get('/fetch-videos', async (req, res) => {
     const videos = await getRandomVideos(count);
     res.json(videos);
   } catch (err) {
-    console.error('Error fetching videos:', err);
+    console.error('❌ Error fetching videos:', err);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
-// Fetch single video
+// Fetch one valid video
 app.get('/fetch-video', async (req, res) => {
   try {
     let video = null;
-
     while (true) {
       const [candidate] = await getRandomVideos(1);
       if (candidate?.videoUrl) {
         video = candidate;
         break;
       }
-      // Optional: log the skip for debug
-      console.warn('Skipping null videoUrl...');
+      console.warn('⚠️ Skipping null videoUrl...');
     }
 
     res.json(video);
   } catch (err) {
-    console.error('Error fetching video:', err);
+    console.error('❌ Error fetching single video:', err);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
-
-
-// Proxy endpoint
+// Proxy route for .mp4/.m3u8
 app.get('/proxy', async (req, res) => {
   const targetUrl = req.query.url;
+
   if (!targetUrl || !ALLOWED_HOSTS.some(host => targetUrl.startsWith(host))) {
     return res.status(400).send('Blocked: Invalid URL');
   }
@@ -90,7 +83,7 @@ app.get('/proxy', async (req, res) => {
     const response = await fetch(targetUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0',
-        Referer: 'https://www.redgifs.com/',
+        'Referer': 'https://www.redgifs.com/',
       },
     });
 
@@ -100,17 +93,17 @@ app.get('/proxy', async (req, res) => {
       'Content-Type': contentType,
     });
 
+    // Rewriting .m3u8 files
     if (targetUrl.endsWith('.m3u8')) {
       const text = await response.text();
       const proxyBase = `https://meskit-backend.onrender.com/proxy`;
       const rewritten = text.replace(
         /https:\/\/media\.redgifs\.com\/[^\s"]+/g,
-        (match) => `${proxyBase}?url=${encodeURIComponent(match)}`
+        match => `${proxyBase}?url=${encodeURIComponent(match)}`
       );
       return res.send(rewritten);
     }
 
-    // Proxy stream
     if (response.body) {
       response.body.pipe(res);
     } else {
@@ -118,12 +111,12 @@ app.get('/proxy', async (req, res) => {
       res.send(buffer);
     }
   } catch (err) {
-    console.error('Proxy error:', err);
+    console.error('❌ Proxy error:', err);
     res.status(500).send('Proxy error');
   }
 });
 
-// Fake HLS Playlist
+// Fake playlist for .m4s
 app.get('/fake-playlist.m3u8', (req, res) => {
   const m4sUrl = req.query.url;
   if (!m4sUrl || !m4sUrl.startsWith('https://media.redgifs.com')) {
@@ -131,8 +124,6 @@ app.get('/fake-playlist.m3u8', (req, res) => {
   }
 
   const proxyUrl = `https://meskit-backend.onrender.com/proxy?url=${encodeURIComponent(m4sUrl)}`;
-
-  // Basic mock values — you should eventually auto-detect these
   const initSegment = "1433@0";
   const segments = [
     "261489@1433",
@@ -152,8 +143,7 @@ app.get('/fake-playlist.m3u8', (req, res) => {
 #EXT-X-VERSION:7
 #EXT-X-TARGETDURATION:${Math.ceil(Math.max(...durations))}
 #EXT-X-MEDIA-SEQUENCE:0
-#EXT-X-MAP:URI="${proxyUrl}",BYTERANGE="${initSegment}"
-`;
+#EXT-X-MAP:URI="${proxyUrl}",BYTERANGE="${initSegment}"\n`;
 
   for (let i = 0; i < segments.length; i++) {
     playlist += `#EXTINF:${durations[i]},\n`;
@@ -168,23 +158,24 @@ app.get('/fake-playlist.m3u8', (req, res) => {
   res.send(playlist);
 });
 
-// Connect and start
+// Wake route for uptime monitoring or Render wake
+app.get('/wake', (req, res) => {
+  res.send('✅ Wake-up successful at ' + new Date().toISOString());
+});
+
+// Self-ping every 5 minutes to keep alive
+if (process.env.SELF_URL) {
+  setInterval(() => {
+    fetch(`${process.env.SELF_URL}/`)
+      .then(res => res.text())
+      .then(data => console.log(`🔁 Self-ping success: ${data}`))
+      .catch(err => console.error('❌ Self-ping failed:', err));
+  }, 1000 * 60 * 5); // every 5 mins
+}
+
+// Connect to DB and start server
 connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
   });
 });
-// Wake function
-app.get('/wake', (req, res) => {
-  res.send('✅ Wake-up successful at ' + new Date().toISOString());
-});
-
-// Optional: Self-ping every 5 minutes to keep Render.com backend awake
-if (process.env.SELF_URL) {
-  setInterval(() => {
-    fetch(`${process.env.SELF_URL}/wake`)
-      .then(res => res.text())
-      .then(data => console.log(`🔁 Self-ping success: ${data}`))
-      .catch(err => console.error('❌ Self-ping failed:', err));
-  }, 1000 * 60 * 5); // every 5 minutes
-}
