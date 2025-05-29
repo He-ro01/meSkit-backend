@@ -25,6 +25,7 @@ async function getRandomVideos(count) {
   });
 }
 function convertm4sToM3u8(url) {
+  if (url === null) return;
   const match = url.match(/\/([^\/]+?)-mobile\.m4s$/i);
   if (!match) return null;
 
