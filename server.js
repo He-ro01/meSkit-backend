@@ -19,18 +19,19 @@ async function getRandomVideos(count) {
   const randomDocs = await RedGif.aggregate([{ $sample: { size: count } }]);
   return randomDocs.map(doc => {
     const plainDoc = doc.toObject ? doc.toObject() : doc;
-    plainDoc.videoUrl = convertm4sToM3u8(plainDoc.videoUrl);
+    plainDoc.videoUrl = convertm4sToM3u8(plainDoc.videoUrl) || plainDoc.videoUrl;
+
     return plainDoc;
   });
 }
 function convertm4sToM3u8(url) {
-  // Extract the file name without extension
-  match = url.match(/\/([^\/]+?)-mobile\.m4s$/i);
+  const match = url.match(/\/([^\/]+?)-mobile\.m4s$/i);
   if (!match) return null;
 
   const gifName = match[1].toLowerCase();
   return `https://api.redgifs.com/v2/gifs/${gifName}/sd.m3u8`;
 }
+
 
 // Endpoint to fetch multiple random videos
 app.get('/fetch-videos', async (req, res) => {
@@ -99,7 +100,7 @@ app.get('/proxy', async (req, res) => {
       return res.send(rewritten);
     }
     //
-  
+
     // Stream other content types (e.g., .m4s segments)
     if (response.body) {
       response.body.pipe(res);
