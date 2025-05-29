@@ -17,7 +17,6 @@ const RedGif = mongoose.model('ProcessedRedGifs', redGifSchema, 'processedredgif
 // Utility function to fetch random videos and replace "m4s" with "mp4"
 async function getRandomVideos(count) {
   const randomDocs = await RedGif.aggregate([{ $sample: { size: count } }]);
-
   return randomDocs.map(doc => {
     const plainDoc = doc.toObject ? doc.toObject() : doc;
     plainDoc.videoUrl = convertm4sToM3u8(plainDoc.videoUrl);
@@ -100,14 +99,7 @@ app.get('/proxy', async (req, res) => {
       return res.send(rewritten);
     }
     //
-    function convertm4sToM3u8(url) {
-      // Extract the file name without extension
-      match = url.match(/\/([^\/]+?)-mobile\.m4s$/i);
-      if (!match) return null;
-
-      const gifName = match[1].toLowerCase();
-      return `https://api.redgifs.com/v2/gifs/${gifName}/sd.m3u8`;
-    }
+  
     // Stream other content types (e.g., .m4s segments)
     if (response.body) {
       response.body.pipe(res);
