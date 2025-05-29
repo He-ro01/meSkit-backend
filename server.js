@@ -20,7 +20,7 @@ async function getRandomVideos(count) {
 
   return randomDocs.map(doc => {
     const plainDoc = doc.toObject ? doc.toObject() : doc;
-    plainDoc = convertm4sToM3u8(plainDoc);
+    plainDoc.videoUrl = convertm4sOrMp4ToM3u8(plainDoc.videoUrl);
     return plainDoc;
   });
 }
