@@ -20,9 +20,6 @@ async function getRandomVideos(count) {
 
   return randomDocs.map(doc => {
     const plainDoc = doc.toObject ? doc.toObject() : doc;
-    if (plainDoc.videoUrl && typeof plainDoc.videoUrl === 'string') {
-      plainDoc.videoUrl = plainDoc.videoUrl.replace(/m4s/g, 'mp4');
-    }
     return plainDoc;
   });
 }
