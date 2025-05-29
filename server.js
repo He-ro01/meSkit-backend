@@ -51,6 +51,46 @@ app.get('/fetch-video', async (req, res) => {
 });
 
 // Connect to database and start server
+app.get('/proxy', async (req, res) => {
+  const targetUrl = req.query.url;
+  if (!targetUrl || !targetUrl.startsWith(ALLOWED_HOST)) {
+    return res.status(400).send('Blocked: Invalid URL');
+  }
+
+  try {
+    const response = await fetch(targetUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Referer': 'https://www.redgifs.com/',
+      },
+    });
+
+    const contentType = response.headers.get('content-type');
+    res.set({
+      'Access-Control-Allow-Origin': '*',
+      'Content-Type': contentType,
+    });
+
+    // If it's a playlist (.m3u8), rewrite it
+    if (targetUrl.endsWith('.m3u8')) {
+      const text = await response.text();
+      const rewritten = text.replace(
+        /https:\/\/media\.redgifs\.com\/[^\s]+/g,
+        match => `http://localhost:3000/proxy?url=${encodeURIComponent(match)}`
+      );
+      return res.send(rewritten);
+    }
+
+    // For .m4s segments or other media
+    response.body.pipe(res);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Proxy error');
+  }
+});
+
+//
 connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
