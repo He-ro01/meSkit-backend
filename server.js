@@ -7,34 +7,30 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Enable CORS for all origins (consider restricting this in production)
 app.use(cors());
 
 // Schema for processedredgifs (flexible)
 const redGifSchema = new mongoose.Schema({}, { strict: false });
 const RedGif = mongoose.model('ProcessedRedGifs', redGifSchema, 'processedredgifs');
 
-// ✅ Utility: Convert .m4s or .mp4 URLs to .m3u8 playlist URLs
-function convertm4sOrMp4ToM3u8(url) {
-  if (!url) return null;
-
-  const m4sMatch = url.match(/\/([^\/]+?)-mobile\.m4s$/i);
-  const mp4Match = url.match(/\/([^\/]+?)\.mp4$/i);
-
-  const gifName = (m4sMatch || mp4Match)?.[1]?.toLowerCase();
-  if (!gifName) return url;
-
-  return `https://api.redgifs.com/v2/gifs/${gifName}/sd.m3u8`;
-}
-
-// Utility function to fetch random videos
+// Utility function to fetch random videos and replace "m4s" with "mp4"
 async function getRandomVideos(count) {
   const randomDocs = await RedGif.aggregate([{ $sample: { size: count } }]);
 
   return randomDocs.map(doc => {
     const plainDoc = doc.toObject ? doc.toObject() : doc;
-    plainDoc.videoUrl = convertm4sOrMp4ToM3u8(plainDoc.videoUrl);
+    plainDoc.videoUrl = convertm4sToM3u8(plainDoc.videoUrl);
     return plainDoc;
   });
+}
+function convertm4sToM3u8(url) {
+  // Extract the file name without extension
+  match = url.match(/\/([^\/]+?)-mobile\.m4s$/i);
+  if (!match) return null;
+
+  const gifName = match[1].toLowerCase();
+  return `https://api.redgifs.com/v2/gifs/${gifName}/sd.m3u8`;
 }
 
 // Endpoint to fetch multiple random videos
@@ -60,6 +56,7 @@ app.get('/fetch-video', async (req, res) => {
   }
 });
 
+// Connect to database and start server
 // Allowed hosts whitelist for proxy URLs
 const ALLOWED_HOSTS = [
   'https://api.redgifs.com',
@@ -102,11 +99,20 @@ app.get('/proxy', async (req, res) => {
       );
       return res.send(rewritten);
     }
+    //
+    function convertm4sToM3u8(url) {
+      // Extract the file name without extension
+      match = url.match(/\/([^\/]+?)-mobile\.m4s$/i);
+      if (!match) return null;
 
+      const gifName = match[1].toLowerCase();
+      return `https://api.redgifs.com/v2/gifs/${gifName}/sd.m3u8`;
+    }
     // Stream other content types (e.g., .m4s segments)
     if (response.body) {
       response.body.pipe(res);
     } else {
+      // Fallback for older Node versions or non-streaming responses
       const buffer = await response.buffer();
       res.send(buffer);
     }
@@ -115,8 +121,7 @@ app.get('/proxy', async (req, res) => {
     res.status(500).send('Proxy error');
   }
 });
-
-// Connect to database and start server
+//
 connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
