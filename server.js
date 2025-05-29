@@ -3,40 +3,43 @@ const mongoose = require('mongoose');
 const connectDB = require('./db');
 const cors = require('cors');
 require('dotenv').config();
+const fetch = require('node-fetch'); // Ensure you have node-fetch installed
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Enable CORS for all origins (consider restricting this in production)
 app.use(cors());
 
-// Schema for processedredgifs (flexible)
+// MongoDB Schema
 const redGifSchema = new mongoose.Schema({}, { strict: false });
 const RedGif = mongoose.model('ProcessedRedGifs', redGifSchema, 'processedredgifs');
 
-// Utility function to fetch random videos and replace "m4s" with "mp4"
+// Whitelisted Hosts
+const ALLOWED_HOSTS = [
+  'https://api.redgifs.com',
+  'https://media.redgifs.com',
+];
+
+// Utility to return random videos with proxy URL
 async function getRandomVideos(count) {
   const randomDocs = await RedGif.aggregate([{ $sample: { size: count } }]);
   return randomDocs.map(doc => {
     const plainDoc = doc.toObject ? doc.toObject() : doc;
     if (plainDoc.videoUrl && typeof plainDoc.videoUrl === 'string') {
-      // Example: https://media.redgifs.com/AlarmingJuicyWoodstorks-mobile.m4s
       const m4sUrl = plainDoc.videoUrl;
-      const proxyM3U8 = `https://test-video-backend.onrender.com/fake-playlist.m3u8?url=${encodeURIComponent(m4sUrl)}`;
-
+      const playlistUrl = `https://your-backend-domain/fake-playlist.m3u8?url=${encodeURIComponent(m4sUrl)}`;
       return {
         ...plainDoc,
-        m3u8: proxyM3U8 // add generated playlist URL
+        m3u8: playlistUrl,
       };
     }
     return plainDoc;
   });
-
 }
 
-// Endpoint to fetch multiple random videos
+// Fetch multiple videos
 app.get('/fetch-videos', async (req, res) => {
-  const count = Math.min(parseInt(req.query.var) || 10, 50); // max 50
+  const count = Math.min(parseInt(req.query.var) || 10, 50);
   try {
     const videos = await getRandomVideos(count);
     res.json(videos);
@@ -46,7 +49,7 @@ app.get('/fetch-videos', async (req, res) => {
   }
 });
 
-// Endpoint to fetch a single random video
+// Fetch single video
 app.get('/fetch-video', async (req, res) => {
   try {
     const [video] = await getRandomVideos(1);
@@ -57,22 +60,10 @@ app.get('/fetch-video', async (req, res) => {
   }
 });
 
-// Connect to database and start server
-// Allowed hosts whitelist for proxy URLs
-const ALLOWED_HOSTS = [
-  'https://api.redgifs.com',
-  'https://media.redgifs.com',
-];
-
 // Proxy endpoint
 app.get('/proxy', async (req, res) => {
   const targetUrl = req.query.url;
-
-  // Validate URL presence and host
-  if (
-    !targetUrl ||
-    !ALLOWED_HOSTS.some((host) => targetUrl.startsWith(host))
-  ) {
+  if (!targetUrl || !ALLOWED_HOSTS.some(host => targetUrl.startsWith(host))) {
     return res.status(400).send('Blocked: Invalid URL');
   }
 
@@ -90,22 +81,20 @@ app.get('/proxy', async (req, res) => {
       'Content-Type': contentType,
     });
 
-    // Rewrite .m3u8 playlist URLs to route through this proxy
     if (targetUrl.endsWith('.m3u8')) {
       const text = await response.text();
-      const proxyBase = `http://localhost:${PORT}/proxy`;
+      const proxyBase = `https://your-backend-domain/proxy`;
       const rewritten = text.replace(
-        /https:\/\/media\.redgifs\.com\/[^\s]+/g,
+        /https:\/\/media\.redgifs\.com\/[^\s"]+/g,
         (match) => `${proxyBase}?url=${encodeURIComponent(match)}`
       );
       return res.send(rewritten);
     }
 
-    // Stream other content types (e.g., .m4s segments)
+    // Proxy stream
     if (response.body) {
       response.body.pipe(res);
     } else {
-      // Fallback for older Node versions or non-streaming responses
       const buffer = await response.buffer();
       res.send(buffer);
     }
@@ -114,15 +103,17 @@ app.get('/proxy', async (req, res) => {
     res.status(500).send('Proxy error');
   }
 });
-//
+
+// Fake HLS Playlist
 app.get('/fake-playlist.m3u8', (req, res) => {
-  const originalM4SUrl = req.query.url;
-  if (!originalM4SUrl || !originalM4SUrl.startsWith('https://media.redgifs.com')) {
-    return res.status(400).send("Invalid .m4s URL");
+  const m4sUrl = req.query.url;
+  if (!m4sUrl || !m4sUrl.startsWith('https://media.redgifs.com')) {
+    return res.status(400).send('Invalid .m4s URL');
   }
 
-  const proxyUrl = `http://localhost:${PORT}/proxy?url=${encodeURIComponent(originalM4SUrl)}`;
+  const proxyUrl = `https://your-backend-domain/proxy?url=${encodeURIComponent(m4sUrl)}`;
 
+  // Basic mock values — you should eventually auto-detect these
   const initSegment = "1433@0";
   const segments = [
     "261489@1433",
@@ -158,7 +149,7 @@ app.get('/fake-playlist.m3u8', (req, res) => {
   res.send(playlist);
 });
 
-//
+// Connect and start
 connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
