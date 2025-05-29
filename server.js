@@ -19,20 +19,20 @@ async function getRandomVideos(count) {
   const randomDocs = await RedGif.aggregate([{ $sample: { size: count } }]);
   return randomDocs.map(doc => {
     const plainDoc = doc.toObject ? doc.toObject() : doc;
-    plainDoc.videoUrl = convertm4sToM3u8(plainDoc.videoUrl) || plainDoc.videoUrl;
+    if (plainDoc.videoUrl && typeof plainDoc.videoUrl === 'string') {
+      // Example: https://media.redgifs.com/AlarmingJuicyWoodstorks-mobile.m4s
+      const m4sUrl = plainDoc.videoUrl;
+      const proxyM3U8 = `https://test-video-backend.onrender.com/fake-playlist.m3u8?url=${encodeURIComponent(m4sUrl)}`;
 
+      return {
+        ...plainDoc,
+        m3u8: proxyM3U8 // add generated playlist URL
+      };
+    }
     return plainDoc;
   });
-}
-function convertm4sToM3u8(url) {
-  if (url === null) return;
-  const match = url.match(/\/([^\/]+?)-mobile\.m4s$/i);
-  if (!match) return null;
 
-  const gifName = match[1].toLowerCase();
-  return `https://api.redgifs.com/v2/gifs/${gifName}/sd.m3u8`;
 }
-
 
 // Endpoint to fetch multiple random videos
 app.get('/fetch-videos', async (req, res) => {
@@ -100,7 +100,6 @@ app.get('/proxy', async (req, res) => {
       );
       return res.send(rewritten);
     }
-    //
 
     // Stream other content types (e.g., .m4s segments)
     if (response.body) {
@@ -115,6 +114,50 @@ app.get('/proxy', async (req, res) => {
     res.status(500).send('Proxy error');
   }
 });
+//
+app.get('/fake-playlist.m3u8', (req, res) => {
+  const originalM4SUrl = req.query.url;
+  if (!originalM4SUrl || !originalM4SUrl.startsWith('https://media.redgifs.com')) {
+    return res.status(400).send("Invalid .m4s URL");
+  }
+
+  const proxyUrl = `http://localhost:${PORT}/proxy?url=${encodeURIComponent(originalM4SUrl)}`;
+
+  const initSegment = "1433@0";
+  const segments = [
+    "261489@1433",
+    "303728@262922",
+    "341823@566650",
+    "370377@908473",
+    "326299@1278850",
+    "355767@1605149",
+    "313570@1960916",
+    "309220@2274486",
+    "296417@2583706",
+    "35237@2880123"
+  ];
+  const durations = [2, 2, 2, 2, 2, 2, 2, 2, 2, 0.166667];
+
+  let playlist = `#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-TARGETDURATION:${Math.ceil(Math.max(...durations))}
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-MAP:URI="${proxyUrl}",BYTERANGE="${initSegment}"
+`;
+
+  for (let i = 0; i < segments.length; i++) {
+    playlist += `#EXTINF:${durations[i]},\n`;
+    playlist += `#EXT-X-BYTERANGE:${segments[i]}\n`;
+    playlist += `${proxyUrl}\n`;
+  }
+
+  playlist += "#EXT-X-ENDLIST\n";
+
+  res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.send(playlist);
+});
+
 //
 connectDB().then(() => {
   app.listen(PORT, () => {
