@@ -24,17 +24,19 @@ const ALLOWED_HOSTS = [
 async function getRandomVideos(count) {
   const randomDocs = await RedGif.aggregate([{ $sample: { size: count } }]);
   return randomDocs.map(doc => {
-    const plainDoc = doc.toObject ? doc.toObject() : doc;
-    if (plainDoc.videoUrl && typeof plainDoc.videoUrl === 'string') {
-      const m4sUrl = plainDoc.videoUrl;
-      const playlistUrl = `https://your-backend-domain/fake-playlist.m3u8?url=${encodeURIComponent(m4sUrl)}`;
-      return {
-        ...plainDoc,
-        m3u8: playlistUrl,
-      };
+    const plainDoc = doc.toObject();
+    if (!plainDoc.videoUrl) {
+      console.warn('Missing videoUrl for doc:', doc._id);
+      return null; // Skip this doc
     }
-    return plainDoc;
-  });
+
+    const playlistUrl = `https://your-backend/fake-playlist.m3u8?url=${encodeURIComponent(plainDoc.videoUrl)}`;
+    return {
+      ...plainDoc,
+      m3u8: playlistUrl,
+    };
+  }).filter(Boolean); // remove nulls
+
 }
 
 // Fetch multiple videos
@@ -52,13 +54,26 @@ app.get('/fetch-videos', async (req, res) => {
 // Fetch single video
 app.get('/fetch-video', async (req, res) => {
   try {
-    const [video] = await getRandomVideos(1);
+    let video = null;
+
+    while (true) {
+      const [candidate] = await getRandomVideos(1);
+      if (candidate?.videoUrl) {
+        video = candidate;
+        break;
+      }
+      // Optional: log the skip for debug
+      console.warn('Skipping null videoUrl...');
+    }
+
     res.json(video);
   } catch (err) {
     console.error('Error fetching video:', err);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
+
+
 
 // Proxy endpoint
 app.get('/proxy', async (req, res) => {
