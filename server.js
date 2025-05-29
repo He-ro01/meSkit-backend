@@ -51,9 +51,21 @@ app.get('/fetch-video', async (req, res) => {
 });
 
 // Connect to database and start server
+// Allowed hosts whitelist for proxy URLs
+const ALLOWED_HOSTS = [
+  'https://api.redgifs.com',
+  'https://media.redgifs.com',
+];
+
+// Proxy endpoint
 app.get('/proxy', async (req, res) => {
   const targetUrl = req.query.url;
-  if (!targetUrl || !targetUrl.startsWith(ALLOWED_HOST)) {
+
+  // Validate URL presence and host
+  if (
+    !targetUrl ||
+    !ALLOWED_HOSTS.some((host) => targetUrl.startsWith(host))
+  ) {
     return res.status(400).send('Blocked: Invalid URL');
   }
 
@@ -61,35 +73,40 @@ app.get('/proxy', async (req, res) => {
     const response = await fetch(targetUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0',
-        'Referer': 'https://www.redgifs.com/',
+        Referer: 'https://www.redgifs.com/',
       },
     });
 
-    const contentType = response.headers.get('content-type');
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
     res.set({
       'Access-Control-Allow-Origin': '*',
       'Content-Type': contentType,
     });
 
-    // If it's a playlist (.m3u8), rewrite it
+    // Rewrite .m3u8 playlist URLs to route through this proxy
     if (targetUrl.endsWith('.m3u8')) {
       const text = await response.text();
+      const proxyBase = `http://localhost:${PORT}/proxy`;
       const rewritten = text.replace(
         /https:\/\/media\.redgifs\.com\/[^\s]+/g,
-        match => `http://localhost:3000/proxy?url=${encodeURIComponent(match)}`
+        (match) => `${proxyBase}?url=${encodeURIComponent(match)}`
       );
       return res.send(rewritten);
     }
 
-    // For .m4s segments or other media
-    response.body.pipe(res);
-
+    // Stream other content types (e.g., .m4s segments)
+    if (response.body) {
+      response.body.pipe(res);
+    } else {
+      // Fallback for older Node versions or non-streaming responses
+      const buffer = await response.buffer();
+      res.send(buffer);
+    }
   } catch (err) {
-    console.error(err);
+    console.error('Proxy error:', err);
     res.status(500).send('Proxy error');
   }
 });
-
 //
 connectDB().then(() => {
   app.listen(PORT, () => {
