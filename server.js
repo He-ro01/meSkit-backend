@@ -24,20 +24,24 @@ const ALLOWED_HOSTS = [
 async function getRandomVideos(count) {
   const randomDocs = await RedGif.aggregate([{ $sample: { size: count } }]);
   return randomDocs.map(doc => {
-    const plainDoc = doc.toObject();
+    const plainDoc = doc.toObject ? doc.toObject() : doc;
+
     if (!plainDoc.videoUrl) {
       console.warn('Missing videoUrl for doc:', doc._id);
       return null; // Skip this doc
     }
 
-    const playlistUrl = `https://your-backend/fake-playlist.m3u8?url=${encodeURIComponent(plainDoc.videoUrl)}`;
+    // If videoUrl ends with .m4s, try to convert it to .mp4
+    if (plainDoc.videoUrl.endsWith('.m4s')) {
+      plainDoc.videoUrl = plainDoc.videoUrl.replace(/\.m4s$/, '.mp4');
+    }
+
     return {
-      ...plainDoc,
-      m3u8: playlistUrl,
+      ...plainDoc
     };
   }).filter(Boolean); // remove nulls
-
 }
+
 
 // Fetch multiple videos
 app.get('/fetch-videos', async (req, res) => {
@@ -98,7 +102,7 @@ app.get('/proxy', async (req, res) => {
 
     if (targetUrl.endsWith('.m3u8')) {
       const text = await response.text();
-      const proxyBase = `https://your-backend-domain/proxy`;
+      const proxyBase = `https://meskit-backend.onrender.com/proxy`;
       const rewritten = text.replace(
         /https:\/\/media\.redgifs\.com\/[^\s"]+/g,
         (match) => `${proxyBase}?url=${encodeURIComponent(match)}`
@@ -126,7 +130,7 @@ app.get('/fake-playlist.m3u8', (req, res) => {
     return res.status(400).send('Invalid .m4s URL');
   }
 
-  const proxyUrl = `https://your-backend-domain/proxy?url=${encodeURIComponent(m4sUrl)}`;
+  const proxyUrl = `https://meskit-backend.onrender.com/proxy?url=${encodeURIComponent(m4sUrl)}`;
 
   // Basic mock values — you should eventually auto-detect these
   const initSegment = "1433@0";
