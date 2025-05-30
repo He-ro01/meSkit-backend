@@ -5,7 +5,8 @@ const cors = require('cors');
 const morgan = require('morgan');
 const fetch = require('node-fetch');
 const cacheRoutes = require('./routes/cache'); // Make sure this file exists and exports an Express router
-
+const sharp = require('sharp');
+const { uploadBufferToS3 } = require('./s3/upload'); // Create this helper
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -13,7 +14,10 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 app.use(morgan('dev'));
+//
 
+const CLOUDFRONT_DOMAIN = 'https://d2f8yoxn7t93pq.cloudfront.net';
+const BUCKET_NAME = 'zidit';
 // ✅ MongoDB connection
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
@@ -33,41 +37,53 @@ async function getRandomVideos(count) {
     randomDocs.map(async (doc) => {
       const plainDoc = doc.toObject ? doc.toObject() : doc;
 
+      // ❌ If videoUrl is missing, delete and skip
       if (!plainDoc.videoUrl) {
         console.warn('⚠️ Missing videoUrl for doc:', doc._id);
-
-        // ❌ Delete the document from DB
-        if (doc._id) {
-          try {
-            await RedGif.deleteOne({ _id: doc._id });
-            console.log(`🗑️ Deleted doc with missing videoUrl: ${doc._id}`);
-          } catch (delErr) {
-            console.error(`❌ Error deleting doc ${doc._id}:`, delErr);
-          }
+        try {
+          await RedGif.deleteOne({ _id: doc._id });
+          console.log(`🗑️ Deleted doc with missing videoUrl: ${doc._id}`);
+        } catch (delErr) {
+          console.error(`❌ Error deleting doc ${doc._id}:`, delErr);
         }
-
         return null;
       }
 
+      // ✅ Convert imageUrl to JPG and upload
+      if (plainDoc.imageUrl && !plainDoc.imageUrl.includes(CLOUDFRONT_DOMAIN)) {
+        try {
+          const imageRes = await fetch(plainDoc.imageUrl);
+          if (!imageRes.ok) throw new Error(`Failed to fetch image: ${imageRes.statusText}`);
+          const buffer = await imageRes.buffer();
+
+          const jpgBuffer = await sharp(buffer).jpeg().toBuffer();
+          const imageKey = `images/${plainDoc._id}.jpg`;
+          const imageUrl = `${CLOUDFRONT_DOMAIN}/${imageKey}`;
+
+          await uploadBufferToS3(BUCKET_NAME, imageKey, jpgBuffer, 'image/jpeg');
+          plainDoc.imageUrl = imageUrl;
+        } catch (err) {
+          console.warn(`❌ Failed to process image for doc ${plainDoc._id}:`, err.message);
+          plainDoc.imageUrl = null;
+        }
+      }
+
+      // ✅ HLS convert .m4s to .m3u8 via /api/cache
       if (plainDoc.videoUrl.endsWith('.m4s')) {
         plainDoc.videoUrl = plainDoc.videoUrl.replace(/\.m4s$/, '.mp4');
-
         try {
-          const processRes = await fetch("http://localhost:" + PORT + "/api/cache", {
+          const processRes = await fetch(`http://localhost:${PORT}/api/cache`, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ videoUrl: plainDoc.videoUrl }),
           });
 
           const json = await processRes.json();
           console.log(json.streamUrl);
           plainDoc.videoUrl = json.streamUrl;
-
         } catch (err) {
           console.warn("❌ Error processing HLS for doc", doc._id, err);
-          return null; // Skip this doc on failure
+          return null;
         }
       }
 
@@ -77,6 +93,7 @@ async function getRandomVideos(count) {
 
   return processedDocs.filter(Boolean); // Remove null entries
 }
+
 
 
 // ✅ API: Fetch multiple videos

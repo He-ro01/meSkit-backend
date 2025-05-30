@@ -30,5 +30,17 @@ async function uploadFolderToS3(folderPath, bucketName, prefix = '') {
     console.log(`✅ Uploaded: ${fileKey}`);
   }
 }
+async function uploadBufferToS3(bucketName, key, buffer, contentType) {
+  await s3.upload({
+    Bucket: bucketName,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+  }).promise();
 
-module.exports = { uploadFolderToS3 };
+  console.log(`✅ Uploaded buffer to S3: ${key}`);
+}
+
+module.exports = { uploadFolderToS3, uploadBufferToS3 };
+
+
