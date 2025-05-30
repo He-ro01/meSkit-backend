@@ -35,6 +35,17 @@ async function getRandomVideos(count) {
 
       if (!plainDoc.videoUrl) {
         console.warn('⚠️ Missing videoUrl for doc:', doc._id);
+
+        // ❌ Delete the document from DB
+        if (doc._id) {
+          try {
+            await RedGif.deleteOne({ _id: doc._id });
+            console.log(`🗑️ Deleted doc with missing videoUrl: ${doc._id}`);
+          } catch (delErr) {
+            console.error(`❌ Error deleting doc ${doc._id}:`, delErr);
+          }
+        }
+
         return null;
       }
 
@@ -42,7 +53,6 @@ async function getRandomVideos(count) {
         plainDoc.videoUrl = plainDoc.videoUrl.replace(/\.m4s$/, '.mp4');
 
         try {
-          // No need to use localhost now — it's part of the same app
           const processRes = await fetch("http://localhost:" + PORT + "/api/cache", {
             method: "POST",
             headers: {
@@ -56,16 +66,18 @@ async function getRandomVideos(count) {
           plainDoc.videoUrl = json.streamUrl;
 
         } catch (err) {
-          console.warn("Error processing HLS", err);
+          console.warn("❌ Error processing HLS for doc", doc._id, err);
           return null; // Skip this doc on failure
         }
       }
+
       return plainDoc;
     })
   );
 
-  return processedDocs.filter(Boolean); // remove nulls
+  return processedDocs.filter(Boolean); // Remove null entries
 }
+
 
 // ✅ API: Fetch multiple videos
 app.get('/fetch-videos', async (req, res) => {
@@ -85,7 +97,7 @@ app.get('/fetch-video', async (req, res) => {
     let video = null;
     while (true) {
       const [candidate] = await getRandomVideos(1);
-        console.log(candidate);
+      console.log(candidate);
       if (candidate?.videoUrl) {
         video = candidate;
         break;

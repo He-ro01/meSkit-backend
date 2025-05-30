@@ -11,12 +11,18 @@ async function uploadFolderToS3(folderPath, bucketName, prefix = '') {
   const files = fs.readdirSync(folderPath);
 
   for (const file of files) {
+    // ❌ Skip MP4 files
+    if (file.endsWith('.mp4')) {
+      console.log(`🚫 Skipping MP4: ${file}`);
+      continue;
+    }
+
     const filePath = path.join(folderPath, file);
     const fileKey = path.posix.join(prefix, file);
 
     const contentType = file.endsWith('.m3u8')
       ? 'application/vnd.apple.mpegurl'
-      : 'video/MP2T';
+      : 'video/MP2T'; // For .ts files
 
     await s3.upload({
       Bucket: bucketName,
@@ -28,5 +34,6 @@ async function uploadFolderToS3(folderPath, bucketName, prefix = '') {
     console.log(`✅ Uploaded: ${fileKey}`);
   }
 }
+
 
 module.exports = { uploadFolderToS3 };
