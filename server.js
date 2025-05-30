@@ -1,45 +1,73 @@
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
-const connectDB = require('./db');
 const cors = require('cors');
-const fetch = require('node-fetch'); // Make sure node-fetch is installed
+const morgan = require('morgan');
+const fetch = require('node-fetch');
+const cacheRoutes = require('./routes/cache'); // Make sure this file exists and exports an Express router
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// ✅ Middleware
 app.use(cors());
+app.use(express.json());
+app.use(morgan('dev'));
 
-// MongoDB Schema
+// ✅ MongoDB connection
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+}).then(() => console.log("✅ Connected to MongoDB"))
+  .catch(err => console.error("❌ MongoDB connection error:", err));
+
+// ✅ MongoDB Schema
 const redGifSchema = new mongoose.Schema({}, { strict: false });
 const RedGif = mongoose.model('ProcessedRedGifs', redGifSchema, 'processedredgifs');
 
-// Whitelisted Hosts
-const ALLOWED_HOSTS = [
-  'https://api.redgifs.com',
-  'https://media.redgifs.com',
-];
-
-// Utility: Get random documents
+// ✅ Utility: Get random documents
 async function getRandomVideos(count) {
   const randomDocs = await RedGif.aggregate([{ $sample: { size: count } }]);
-  return randomDocs.map(doc => {
-    const plainDoc = doc.toObject ? doc.toObject() : doc;
 
-    if (!plainDoc.videoUrl) {
-      console.warn('⚠️ Missing videoUrl for doc:', doc._id);
-      return null;
-    }
+  const processedDocs = await Promise.all(
+    randomDocs.map(async (doc) => {
+      const plainDoc = doc.toObject ? doc.toObject() : doc;
 
-    if (plainDoc.videoUrl.endsWith('.m4s')) {
-      plainDoc.videoUrl = plainDoc.videoUrl.replace(/\.m4s$/, '.mp4');
-    }
+      if (!plainDoc.videoUrl) {
+        console.warn('⚠️ Missing videoUrl for doc:', doc._id);
+        return null;
+      }
 
-    return { ...plainDoc };
-  }).filter(Boolean);
+      if (plainDoc.videoUrl.endsWith('.m4s')) {
+        plainDoc.videoUrl = plainDoc.videoUrl.replace(/\.m4s$/, '.mp4');
+
+        try {
+          // No need to use localhost now — it's part of the same app
+          const processRes = await fetch("http://localhost:" + PORT + "/api/cache", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ videoUrl: plainDoc.videoUrl }),
+          });
+
+          const json = await processRes.json();
+          console.log(json.streamUrl);
+          plainDoc.videoUrl = json.streamUrl;
+
+        } catch (err) {
+          console.warn("Error processing HLS", err);
+          return null; // Skip this doc on failure
+        }
+      }
+      return plainDoc;
+    })
+  );
+
+  return processedDocs.filter(Boolean); // remove nulls
 }
 
-// Fetch multiple videos
+// ✅ API: Fetch multiple videos
 app.get('/fetch-videos', async (req, res) => {
   const count = Math.min(parseInt(req.query.var) || 10, 50);
   try {
@@ -51,12 +79,13 @@ app.get('/fetch-videos', async (req, res) => {
   }
 });
 
-// Fetch one valid video
+// ✅ API: Fetch one video
 app.get('/fetch-video', async (req, res) => {
   try {
     let video = null;
     while (true) {
       const [candidate] = await getRandomVideos(1);
+        console.log(candidate);
       if (candidate?.videoUrl) {
         video = candidate;
         break;
@@ -71,111 +100,15 @@ app.get('/fetch-video', async (req, res) => {
   }
 });
 
-// Proxy route for .mp4/.m3u8
-app.get('/proxy', async (req, res) => {
-  const targetUrl = req.query.url;
+// ✅ Cache routes (from conv-server)
+app.use('/api', cacheRoutes);
 
-  if (!targetUrl || !ALLOWED_HOSTS.some(host => targetUrl.startsWith(host))) {
-    return res.status(400).send('Blocked: Invalid URL');
-  }
-
-  try {
-    const response = await fetch(targetUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0',
-        'Referer': 'https://www.redgifs.com/',
-      },
-    });
-
-    const contentType = response.headers.get('content-type') || 'application/octet-stream';
-    res.set({
-      'Access-Control-Allow-Origin': '*',
-      'Content-Type': contentType,
-    });
-
-    // Rewriting .m3u8 files
-    if (targetUrl.endsWith('.m3u8')) {
-      const text = await response.text();
-      const proxyBase = `https://meskit-backend.onrender.com/proxy`;
-      const rewritten = text.replace(
-        /https:\/\/media\.redgifs\.com\/[^\s"]+/g,
-        match => `${proxyBase}?url=${encodeURIComponent(match)}`
-      );
-      return res.send(rewritten);
-    }
-
-    if (response.body) {
-      response.body.pipe(res);
-    } else {
-      const buffer = await response.buffer();
-      res.send(buffer);
-    }
-  } catch (err) {
-    console.error('❌ Proxy error:', err);
-    res.status(500).send('Proxy error');
-  }
+// ✅ Wake-up/status route
+app.get('/', (req, res) => {
+  res.send('✅ Combined server is alive at ' + new Date().toISOString());
 });
 
-// Fake playlist for .m4s
-app.get('/fake-playlist.m3u8', (req, res) => {
-  const m4sUrl = req.query.url;
-  if (!m4sUrl || !m4sUrl.startsWith('https://media.redgifs.com')) {
-    return res.status(400).send('Invalid .m4s URL');
-  }
-
-  const proxyUrl = `https://meskit-backend.onrender.com/proxy?url=${encodeURIComponent(m4sUrl)}`;
-  const initSegment = "1433@0";
-  const segments = [
-    "261489@1433",
-    "303728@262922",
-    "341823@566650",
-    "370377@908473",
-    "326299@1278850",
-    "355767@1605149",
-    "313570@1960916",
-    "309220@2274486",
-    "296417@2583706",
-    "35237@2880123"
-  ];
-  const durations = [2, 2, 2, 2, 2, 2, 2, 2, 2, 0.166667];
-
-  let playlist = `#EXTM3U
-#EXT-X-VERSION:7
-#EXT-X-TARGETDURATION:${Math.ceil(Math.max(...durations))}
-#EXT-X-MEDIA-SEQUENCE:0
-#EXT-X-MAP:URI="${proxyUrl}",BYTERANGE="${initSegment}"\n`;
-
-  for (let i = 0; i < segments.length; i++) {
-    playlist += `#EXTINF:${durations[i]},\n`;
-    playlist += `#EXT-X-BYTERANGE:${segments[i]}\n`;
-    playlist += `${proxyUrl}\n`;
-  }
-
-  playlist += "#EXT-X-ENDLIST\n";
-
-  res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.send(playlist);
-});
-
-// Wake route for uptime monitoring or Render wake
-app.get('/wake', (req, res) => {
-  res.send('✅ Wake-up successful at ' + new Date().toISOString());
-});
-
-// Self-ping every 5 minutes to keep alive
-if (process.env.SELF_URL) {
-  setInterval(() => {
-    fetch(`${process.env.SELF_URL}/`)
-      .then(res => res.text())
-      .then(data => console.log(`🔁 Self-ping success: ${data}`))
-      .catch(err => console.error('❌ Self-ping failed:', err));
-  }, 1000 * 60 * 5); // every 5 mins
-}
-
-// Connect to DB and start server
-connectDB().then(() => {
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-  });
+// ✅ Start server
+app.listen(PORT, () => {
+  console.log(`✅ Combined server running at http://localhost:${PORT}`);
 });
