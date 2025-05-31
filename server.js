@@ -69,8 +69,8 @@ async function getRandomVideos(count) {
       }
 
       // ✅ HLS convert .m4s to .m3u8 via /api/cache
-      if (plainDoc.videoUrl.endsWith('.m4s')) {
-        plainDoc.videoUrl = plainDoc.videoUrl.replace(/\.m4s$/, '.mp4');
+      if (plainDoc.videoUrl.endsWith('.m4s') || plainDoc.videoUrl.endsWith('.m4s')) {
+        if (plainDoc.videoUrl.endsWith('.m4s')) plainDoc.videoUrl = plainDoc.videoUrl.replace(/\.m4s$/, '.mp4');
         try {
           const processRes = await fetch(`http://localhost:${PORT}/api/cache`, {
             method: "POST",
